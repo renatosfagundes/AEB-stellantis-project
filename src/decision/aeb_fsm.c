@@ -43,6 +43,9 @@ static float32_t state_to_decel_target(fsm_state_e state)
         case FSM_BRAKE_L3:
             decel = DECEL_L3;  /* 6.0f m/s² */
             break;
+        case FSM_POST_BRAKE:
+            decel = POST_BRAKE_DECEL;  /* hold after stop, ~50 % (FR-BRK-005) */
+            break;
         default:
             decel = 0.0f;
             break;
@@ -245,7 +248,8 @@ void fsm_step(float32_t delta_t_s,
     {
         /* Three sub-cases. Each terminating branch carries its own copy of
          * the four trailer statements (brake_active = 0, alert_level = 0,
-         * decel_target = 0, state_timer += delta_t_s) and `return`. The
+         * decel_target = 0 — POST_BRAKE_DECEL on the POST_BRAKE entry —,
+         * state_timer += delta_t_s) and `return`. The
          * duplication is intentional: the third sub-case must NOT zero
          * those fields because Priority 4 will set them itself. Keep the
          * three blocks in lockstep if any of these trailer fields is ever
@@ -261,7 +265,7 @@ void fsm_step(float32_t delta_t_s,
             m_fsm_mem.post_brake_timer_s = 0.0f;
             fsm_out->brake_active = 0U;
             fsm_out->alert_level = 0U;
-            fsm_out->decel_target = 0.0f;
+            fsm_out->decel_target = POST_BRAKE_DECEL;
             fsm_out->state_timer += delta_t_s;
             return;
         }

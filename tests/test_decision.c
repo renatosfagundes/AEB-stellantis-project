@@ -229,12 +229,16 @@ static void test_fsm_continue_braking_below_vmin(void)
     }
     TEST_ASSERT(fsm_out.fsm_state == (uint8_t)FSM_POST_BRAKE,
                 "POST_BRAKE holds at standstill before POST_BRAKE_HOLD");
+    TEST_ASSERT(fabsf(fsm_out.decel_target - POST_BRAKE_DECEL) < 1e-6f,
+                "POST_BRAKE requests the hold deceleration (FR-BRK-005)");
     for (i = 0; i < 60; i++)
     {
         fsm_step(0.01f, &perc, &driver, &ttc, &fsm_out);
     }
     TEST_ASSERT(fsm_out.fsm_state == (uint8_t)FSM_STANDBY,
                 "POST_BRAKE releases to STANDBY after POST_BRAKE_HOLD at standstill");
+    TEST_ASSERT(fsm_out.decel_target == 0.0f,
+                "Brake hold is released when POST_BRAKE ends");
 }
 
 /* When the ego is below V_EGO_MIN and *not* in a braking state (e.g. the

@@ -42,6 +42,7 @@
 #define DECEL_L1              2.0F       /**< m/s^2                   */
 #define DECEL_L2              4.0F       /**< m/s^2                   */
 #define DECEL_L3              6.0F       /**< m/s^2 (= amax)          */
+#define POST_BRAKE_DECEL      5.0F       /**< m/s^2 — hold after stop; ~50 % brake with the PI gains (FR-BRK-005) */
 
 /* ===== Hysteresis & timing ===== */
 #define HYSTERESIS_TIME       0.2F       /**< s — de-escalation       */
