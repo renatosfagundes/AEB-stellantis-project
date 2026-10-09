@@ -349,6 +349,57 @@ static void test_uds_negative_response_unknown_did(void)
     }
 }
 
+/* UDS RoutineControl 0x0301 must actually gate the FSM (FR-UDS-004).
+ * Before the fix it only wrote uds.aeb_enabled, which nothing consumed,
+ * so the FSM kept following the CAN 0x101 enable bit alone. */
+static void test_uds_routine_disables_aeb(void)
+{
+    aeb_core_state_t state;
+    raw_sensor_input_t raw;
+    int i;
+
+    printf("\n[TEST] UDS RoutineControl 0x0301 gates the FSM\n");
+    (void)aeb_core_init(&state);
+    can_hal_test_reset();
+
+    {
+        uint8_t enable_frame[8] = {0};
+        can_pack_signal(enable_frame, 16, 1, 1U);   /* aeb_enable */
+        can_rx_process(&state.can, 0x101U, enable_frame, 8U);
+    }
+    raw = make_raw(100.0F, 0.0F, 0.0F);
+    inject_can_frames(&state, 100.0F, 0.0F);
+    aeb_core_step(&state, &raw);
+    TEST_ASSERT(state.fsm.fsm_state != (uint8_t)FSM_OFF,
+        "FSM is active with CAN enable = 1 and UDS enable default");
+
+    /* Disable via UDS: serviced in this cycle, effective in the next. */
+    {
+        uint8_t req[4] = { 0x31U, 0x03U, 0x01U, 0x00U };
+        can_rx_process(&state.can, CAN_ID_UDS_REQUEST, req, CAN_DLC_UDS_REQUEST);
+    }
+    for (i = 0; i < 2; i++)
+    {
+        inject_can_frames(&state, 100.0F, 0.0F);
+        aeb_core_step(&state, &raw);
+    }
+    TEST_ASSERT(state.fsm.fsm_state == (uint8_t)FSM_OFF,
+        "FSM goes OFF after UDS RoutineControl 0x0301 = 0");
+
+    /* Re-enable via UDS. */
+    {
+        uint8_t req[4] = { 0x31U, 0x03U, 0x01U, 0x01U };
+        can_rx_process(&state.can, CAN_ID_UDS_REQUEST, req, CAN_DLC_UDS_REQUEST);
+    }
+    for (i = 0; i < 2; i++)
+    {
+        inject_can_frames(&state, 100.0F, 0.0F);
+        aeb_core_step(&state, &raw);
+    }
+    TEST_ASSERT(state.fsm.fsm_state != (uint8_t)FSM_OFF,
+        "FSM leaves OFF after UDS RoutineControl 0x0301 = 1");
+}
+
 static void test_speed_out_of_range(void)
 {
     aeb_core_state_t state;
@@ -388,6 +439,7 @@ int main(void)
     test_uds_request_response_roundtrip();
     test_uds_negative_response_unknown_sid();
     test_uds_negative_response_unknown_did();
+    test_uds_routine_disables_aeb();
 
     printf("\n========================================\n");
     printf("  Results: %d/%d passed, %d failed\n",

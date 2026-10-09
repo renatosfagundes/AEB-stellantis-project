@@ -30,6 +30,7 @@ SCENARIOS = {
     'ccrb_d2_g40': {'ego': 50.0, 'target': 50.0, 'gap': 40.0, 'decel': -2.0, 'brake_t': 2.0},
     'ccrb_d6_g12': {'ego': 50.0, 'target': 50.0, 'gap': 12.0, 'decel': -6.0, 'brake_t': 2.0},
     'ccrb_d6_g40': {'ego': 50.0, 'target': 50.0, 'gap': 40.0, 'decel': -6.0, 'brake_t': 2.0},
+    'uds_diagnostic': {'ego': 0.0, 'target': 0.0, 'gap': 100.0, 'decel': 0.0, 'brake_t': 0.0},
 }
 
 
@@ -106,7 +107,7 @@ def _launch_nodes(context):
 def generate_launch_description():
     scenario_arg = DeclareLaunchArgument(
         'scenario', default_value='ccrs_40',
-        description='Scenario name: ccrs_20/30/40/50, ccrm, ccrb_d2_g12/g40, ccrb_d6_g12/g40'
+        description='Scenario name: ccrs_20/30/40/50, ccrm, ccrb_d2_g12/g40, ccrb_d6_g12/g40, ccrs_50_no_aeb, uds_diagnostic'
     )
 
     return LaunchDescription([

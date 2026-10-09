@@ -218,6 +218,23 @@ static void test_fsm_continue_braking_below_vmin(void)
     fsm_step(0.01f, &perc, &driver, &ttc, &fsm_out);
     TEST_ASSERT(fsm_out.fsm_state == (uint8_t)FSM_POST_BRAKE,
                 "FSM enters POST_BRAKE once v_ego < V_STOP_THRESHOLD");
+
+    /* Regression: while stopped, POST_BRAKE must keep its hold timer and
+     * release to STANDBY after POST_BRAKE_HOLD (FR-BRK-005). Before the
+     * fix the stop branch reset the timer every cycle and POST_BRAKE
+     * never expired at standstill. */
+    for (i = 0; i < 150; i++)
+    {
+        fsm_step(0.01f, &perc, &driver, &ttc, &fsm_out);
+    }
+    TEST_ASSERT(fsm_out.fsm_state == (uint8_t)FSM_POST_BRAKE,
+                "POST_BRAKE holds at standstill before POST_BRAKE_HOLD");
+    for (i = 0; i < 60; i++)
+    {
+        fsm_step(0.01f, &perc, &driver, &ttc, &fsm_out);
+    }
+    TEST_ASSERT(fsm_out.fsm_state == (uint8_t)FSM_STANDBY,
+                "POST_BRAKE releases to STANDBY after POST_BRAKE_HOLD at standstill");
 }
 
 /* When the ego is below V_EGO_MIN and *not* in a braking state (e.g. the

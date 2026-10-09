@@ -43,11 +43,15 @@ SCENARIOS = {
     'ccrs_30':     {'ego': 30.0, 'target': 0.0,  'gap': 100.0, 'decel': 0.0,  'brake_t': 0.0},
     'ccrs_40':     {'ego': 40.0, 'target': 0.0,  'gap': 100.0, 'decel': 0.0,  'brake_t': 0.0},
     'ccrs_50':     {'ego': 50.0, 'target': 0.0,  'gap': 100.0, 'decel': 0.0,  'brake_t': 0.0},
+    # AEB is disabled by the api through /aeb/driver_aeb_enable; the
+    # controller only needs the kinematics.
+    'ccrs_50_no_aeb': {'ego': 50.0, 'target': 0.0, 'gap': 100.0, 'decel': 0.0, 'brake_t': 0.0},
     'ccrm':        {'ego': 50.0, 'target': 20.0, 'gap': 50.0,  'decel': 0.0,  'brake_t': 0.0},
     'ccrb_d2_g12': {'ego': 50.0, 'target': 50.0, 'gap': 12.0,  'decel': -2.0, 'brake_t': 2.0},
     'ccrb_d2_g40': {'ego': 50.0, 'target': 50.0, 'gap': 40.0,  'decel': -2.0, 'brake_t': 2.0},
     'ccrb_d6_g12': {'ego': 50.0, 'target': 50.0, 'gap': 12.0,  'decel': -6.0, 'brake_t': 2.0},
     'ccrb_d6_g40': {'ego': 50.0, 'target': 50.0, 'gap': 40.0,  'decel': -6.0, 'brake_t': 2.0},
+    'uds_diagnostic': {'ego': 0.0, 'target': 0.0, 'gap': 100.0, 'decel': 0.0, 'brake_t': 0.0},
 }
 
 
@@ -414,7 +418,10 @@ class ScenarioController(Node):
                     'speed_kmh': round(ego_speed_kmh, 1),
                     'brake_pct': round(brake_pct, 0),
                     'fsm_state': fsm,
-                    'ttc': round(distance / max(0.5, self.ego_vx) if self.ego_vx > 0.5 else 10.0, 1),
+                    # TTC uses closing speed (ego - target), not ego speed alone,
+                    # so CCRm/CCRb show the same TTC the ECU computes.
+                    'ttc': round(min(10.0, distance / (self.ego_vx - self.target_vx))
+                                 if (self.ego_vx - self.target_vx) > 0.5 else 10.0, 1),
                 }
                 with open('/tmp/aeb_live.json', 'w') as f:
                     json.dump(live, f)

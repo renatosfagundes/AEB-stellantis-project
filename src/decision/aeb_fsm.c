@@ -95,15 +95,15 @@ static fsm_state_e evaluate_desired_state(const perception_output_t * const perc
         desired = FSM_BRAKE_L3;
     }
     /* Distance floors - per SRS Table 10 */
-    else if (perception->distance <= 5.0f)
+    else if (perception->distance <= D_FLOOR_L3)
     {
         desired = FSM_BRAKE_L3;
     }
-    else if (perception->distance <= 10.0f)
+    else if (perception->distance <= D_FLOOR_L2)
     {
         desired = FSM_BRAKE_L2;
     }
-    else if (perception->distance <= 20.0f)
+    else if (perception->distance <= D_FLOOR_L1)
     {
         desired = FSM_BRAKE_L1;
     }
@@ -252,7 +252,8 @@ void fsm_step(float32_t delta_t_s,
          * extended or renamed. */
 
         if ((perception->v_ego < V_STOP_THRESHOLD) &&
-            (current_state >= FSM_BRAKE_L1))
+            (current_state >= FSM_BRAKE_L1) &&
+            (current_state <= FSM_BRAKE_L3))
         {
             /* Vehicle has come to a full stop while braking — hand off to
              * POST_BRAKE for the brake-hold timer (FR-BRK-005). */
@@ -264,7 +265,16 @@ void fsm_step(float32_t delta_t_s,
             fsm_out->state_timer += delta_t_s;
             return;
         }
-        if ((current_state < FSM_BRAKE_L1) || (current_state > FSM_BRAKE_L3))
+        if ((perception->v_ego < V_STOP_THRESHOLD) &&
+            (current_state == FSM_POST_BRAKE))
+        {
+            /* Vehicle at standstill in POST_BRAKE: fall through to
+             * Priority 4 so the hold timer and the accelerator release
+             * (FR-BRK-005/006) can run. Previously the stop branch above
+             * re-entered POST_BRAKE every cycle and reset the timer, so
+             * POST_BRAKE never expired while stopped. */
+        }
+        else if ((current_state < FSM_BRAKE_L1) || (current_state > FSM_BRAKE_L3))
         {
             /* Not in an active braking state (STANDBY / WARNING / OFF /
              * POST_BRAKE) and out-of-range: drop cleanly to STANDBY. The
@@ -279,12 +289,15 @@ void fsm_step(float32_t delta_t_s,
             fsm_out->state_timer += delta_t_s;
             return;
         }
-        /* Actively braking (BRAKE_L1/L2/L3) with v_ego in
-         * [V_STOP_THRESHOLD, V_EGO_MIN): fall through to Priority 4. The
-         * distance-floor logic in evaluate_desired_state resolves to
-         * BRAKE_L1/L2/L3 while the ego is still close to the target, so
-         * the brake stays applied until v_ego < V_STOP_THRESHOLD hits
-         * the first branch above and hands off to POST_BRAKE. */
+        else
+        {
+            /* Actively braking (BRAKE_L1/L2/L3) with v_ego in
+             * [V_STOP_THRESHOLD, V_EGO_MIN): fall through to Priority 4. The
+             * distance-floor logic in evaluate_desired_state resolves to
+             * BRAKE_L1/L2/L3 while the ego is still close to the target, so
+             * the brake stays applied until v_ego < V_STOP_THRESHOLD hits
+             * the first branch above and hands off to POST_BRAKE. */
+        }
     }
 
     /* ===== PRIORITY 4: State Transition Logic ===== */
@@ -294,7 +307,7 @@ void fsm_step(float32_t delta_t_s,
     {
         case FSM_POST_BRAKE:
             m_fsm_mem.post_brake_timer_s += delta_t_s;
-            if ((m_fsm_mem.post_brake_timer_s >= 2.0f) ||
+            if ((m_fsm_mem.post_brake_timer_s >= POST_BRAKE_HOLD) ||
                 (driver->accel_pedal != 0U))
             {
                 new_state = FSM_STANDBY;
@@ -307,7 +320,7 @@ void fsm_step(float32_t delta_t_s,
             if (desired_state == FSM_STANDBY)
             {
                 m_fsm_mem.debounce_timer_s += delta_t_s;
-                if (m_fsm_mem.debounce_timer_s >= 0.2f)
+                if (m_fsm_mem.debounce_timer_s >= HYSTERESIS_TIME)
                 {
                     new_state = desired_state;
                     m_fsm_mem.warn_timer_s = 0.0f;
@@ -318,7 +331,7 @@ void fsm_step(float32_t delta_t_s,
                      (desired_state == FSM_BRAKE_L2) ||
                      (desired_state == FSM_BRAKE_L3))
             {
-                if (m_fsm_mem.warn_timer_s >= 0.8f)
+                if (m_fsm_mem.warn_timer_s >= WARNING_MIN_TIME)
                 {
                     new_state = desired_state;
                     m_fsm_mem.debounce_timer_s = 0.0f;
@@ -352,7 +365,7 @@ void fsm_step(float32_t delta_t_s,
             {
                 /* De-escalation: requires 200ms debounce */
                 m_fsm_mem.debounce_timer_s += delta_t_s;
-                if (m_fsm_mem.debounce_timer_s >= 0.2f)
+                if (m_fsm_mem.debounce_timer_s >= HYSTERESIS_TIME)
                 {
                     new_state = desired_state;
                     m_fsm_mem.debounce_timer_s = 0.0f;

@@ -74,7 +74,11 @@ void aeb_core_step(aeb_core_state_t *state,
     state->driver.brake_pedal    = can_rx.brake_pedal;
     state->driver.accel_pedal    = can_rx.accel_pedal;
     state->driver.steering_angle = can_rx.steering_angle;
-    state->driver.aeb_enabled    = can_rx.aeb_enable;
+    /* AEB is enabled only when both the driver switch (CAN 0x101) and the
+     * UDS RoutineControl 0x0301 state allow it (FR-UDS-004). Previously
+     * the UDS routine wrote uds.aeb_enabled, which nothing consumed. */
+    state->driver.aeb_enabled    = ((can_rx.aeb_enable != 0U) &&
+                                    (state->uds.aeb_enabled != 0U)) ? 1U : 0U;
 
     /* ── 3. Perception: sensor fusion + fault detection ───────────────── */
     perception_step(raw, &state->perception);
