@@ -68,6 +68,7 @@ class Perturbacao:
         self.cv = threading.Condition()
         self.log = None
         self.log_path = None
+        self.log_lock = threading.Lock()
         # ordering policy state
         self.buf = []                  # frames that already "arrived" (t_due passed) but are held by the policy
         self.max_t = -1.0
@@ -102,21 +103,29 @@ class Perturbacao:
             self.rng = random.Random(int(novo.get("seed", 1)))
             self.heap, self.buf, self.max_t, self.K = [], [], -1.0, 0.0
             self.dropped = self.forwarded = 0
-            if self.log:
-                self.log.close()
-                self.log = None
-            if novo.get("run_id"):
-                os.makedirs(LOG_DIR, exist_ok=True)
-                self.log_path = os.path.join(LOG_DIR, f"{novo['run_id']}.csv")
-                self.log = open(self.log_path, "w", buffering=1)
-                self.log.write("t_in,t_out,id,dlc,data,dropped\n")
+            with self.log_lock:
+                if self.log:
+                    self.log.close()
+                    self.log = None
+                if novo.get("run_id"):
+                    os.makedirs(LOG_DIR, exist_ok=True)
+                    self.log_path = os.path.join(LOG_DIR, f"{novo['run_id']}.csv")
+                    self.log = open(self.log_path, "w", buffering=1)
+                    self.log.write("t_in,t_out,id,dlc,data,dropped\n")
             self.cv.notify_all()
         print(f"[CAN BUS] perturbation config: {json.dumps(novo)}", flush=True)
 
     def _logar(self, t_in, t_out, data, dropped=0):
-        if self.log:
-            can_id = struct.unpack('<I', data[0:4])[0]
-            self.log.write(f"{t_in:.6f},{'' if t_out is None else f'{t_out:.6f}'},{can_id},{data[4]},{data[8:16].hex()},{dropped}\n")
+        # Logging must never break frame delivery: the log file is swapped by the
+        # config watcher between runs, so writes are serialized and errors swallowed.
+        with self.log_lock:
+            if not self.log:
+                return
+            try:
+                can_id = struct.unpack('<I', data[0:4])[0]
+                self.log.write(f"{t_in:.6f},{'' if t_out is None else f'{t_out:.6f}'},{can_id},{data[4]},{data[8:16].hex()},{dropped}\n")
+            except Exception:
+                pass
 
     # ---------------------------------------------------------------- ingress
     def ingress(self, data, src):

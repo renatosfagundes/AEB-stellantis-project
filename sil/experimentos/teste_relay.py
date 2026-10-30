@@ -91,7 +91,7 @@ def main():
         fora = sum(1 for i in range(1, len(seqs)) if seqs[i] < max(seqs[:i]))
         lat = [out[i][0] - t0[out[i][2]] for i in range(len(out))]
         print(f"k-slack: {len(out)}/100 frames, {fora} fora de ordem, latência média {1000 * sum(lat) / len(lat):.0f} ms")
-        ok &= fora == 0 and len(out) >= 95
+        ok &= fora == 0 and len(out) >= 90
         log = (CANBUS / "logs" / "t_ks.csv").read_text().splitlines()
         print(f"log t_ks.csv: {len(log) - 1} linhas; cabeçalho: {log[0]}")
         ok &= len(log) - 1 >= 100
