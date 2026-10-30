@@ -40,8 +40,59 @@ FRACOES = (0.0, 0.05, 0.10, 0.20)
 CAMPOS = ["campanha", "cenario", "rep", "run_id", "delay_ms", "p_disorder", "disorder", "policy", "seed", "resultado",
           "gap_final_m", "v_final_kmh", "t_inicio", "t_ttc3", "t_ttc1p8", "t_brake", "t_L2", "t_L3", "lat_brake_ms",
           "frames_percepcao", "frames_entregues", "descartados", "lacunas_60ms", "ecu_off", "max_mode", "dur_s", "erro",
-          "trava_pre_ms", "valida", "tentativa"]
+          "trava_pre_ms", "valida", "tentativa", "atraso_medido_ms", "fora_ordem_medido", "conforme", "motivo_nc"]
 TRAVA_MAX_MS = 100.0
+AUDITORIA_CADA = 20          # balanço de conformidade a cada N rodadas
+CONFORMIDADE_MIN = 0.9       # abaixo disso no bloco, a campanha para
+
+
+def conformidade(cfg, linha):
+    """A rodada aplicou o que o plano definiu? Devolve (conforme, motivo)."""
+    am, fo = linha.get("atraso_medido_ms"), linha.get("fora_ordem_medido")
+    if am is None:
+        return 0, "sem quadros 0x120 no log"
+    p, pol, d = cfg.get("p_disorder", 0.0), cfg.get("policy", "arrival"), cfg.get("delay_ms", 0)
+    if p == 0.0:
+        if pol == "arrival" and abs(am - d) > 15:
+            return 0, f"atraso medido {am} ms, definido {d} ms"
+        if fo > 0.005:
+            return 0, f"{100 * fo:.1f}% fora de ordem sem desordem definida"
+        return 1, ""
+    if pol == "arrival":
+        alvo = d + p * sum(cfg["disorder_ms"]) / 2
+        if abs(am - alvo) > 25:
+            return 0, f"latência média medida {am} ms, definida {alvo:.0f} ms"
+        if fo < p / 4:
+            return 0, f"só {100 * fo:.1f}% fora de ordem para {100 * p:.0f}% definidos"
+    else:
+        # watermark deve entregar tudo em ordem; o K-slack daqui libera por tempo limite (espera limitada),
+        # o que deixa passar uma desordem residual pequena, aceita até 2 %
+        tol = 0.02 if pol == "kslack" else 0.005
+        if fo > tol:
+            return 0, f"política {pol} entregou {100 * fo:.1f}% fora de ordem"
+        if pol == "watermark" and linha.get("descartados", 0) == 0:
+            return 0, "watermark sem nenhum descarte com desordem definida"
+    return 1, ""
+
+
+def auditar(saida, bloco, log):
+    """Balanço do bloco de rodadas: validade, conformidade e coerência do atraso medido por nível."""
+    n = len(bloco)
+    val = sum(l["valida"] for l in bloco)
+    conf = sum(l["conforme"] for l in bloco)
+    por = {}
+    for l in bloco:
+        por.setdefault((l["delay_ms"], l["p_disorder"], l["policy"]), []).append(l.get("atraso_medido_ms") or 0)
+    niveis = "; ".join(f"d={k[0]:.0f} p={k[1]} {k[2]}: {sum(v) / len(v):.0f} ms" for k, v in sorted(por.items()))
+    msg = (f"[auditoria {time.strftime('%H:%M:%S')}] {saida.name}: bloco de {n} rodadas | válidas {val}/{n} | "
+           f"conformes {conf}/{n} | atraso medido por nível: {niveis}")
+    nc = [f"{l['run_id']}: {l['motivo_nc']}" for l in bloco if not l["conforme"]]
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(msg + "\n")
+        for x in nc:
+            f.write("   NÃO CONFORME " + x + "\n")
+    print(msg, flush=True)
+    return conf / n >= CONFORMIDADE_MIN and val / n >= CONFORMIDADE_MIN
 
 
 # ---------------------------------------------------------------- API
@@ -76,9 +127,27 @@ def u(data, start, length):
 def analisar_log(path):
     """Extrai do log do relé os instantes de interesse e contadores. Tempos relativos ao 1º frame 0x120."""
     res = dict(t_inicio=None, t_ttc3=None, t_ttc1p8=None, t_brake=None, t_L2=None, t_L3=None, frames_percepcao=0,
-               frames_entregues=0, descartados=0, lacunas_60ms=0, ecu_off=0, max_mode=0)
+               frames_entregues=0, descartados=0, lacunas_60ms=0, ecu_off=0, max_mode=0,
+               atraso_medido_ms=None, fora_ordem_medido=None)
     if not path.exists():
         return res
+    # Medição do que o relé de fato aplicou aos quadros 0x120 (para auditar a conformidade):
+    # atraso = t_out - t_in médio; fora de ordem = fração de quadros entregues depois de um quadro mais novo.
+    atrasos, fora, entregues, max_tin = [], 0, 0, -1.0
+    with open(path, encoding="utf-8") as f:
+        next(f)
+        for line in f:
+            p = line.split(",")
+            if len(p) >= 6 and p[2] == "288" and p[1] and p[5].strip() == "0":
+                t_in, t_out = float(p[0]), float(p[1])
+                atrasos.append(t_out - t_in)
+                entregues += 1
+                if t_in < max_tin:
+                    fora += 1
+                max_tin = max(max_tin, t_in)
+    if atrasos:
+        res["atraso_medido_ms"] = round(1000 * sum(atrasos) / len(atrasos), 1)
+        res["fora_ordem_medido"] = round(fora / entregues, 3)
     t0, ult_out, v_ego = None, None, None
     with open(path, encoding="utf-8") as f:
         next(f)
@@ -254,6 +323,7 @@ def main():
         w = csv.DictWriter(f, fieldnames=CAMPOS)
         if novo:
             w.writeheader()
+        bloco, log_aud = [], OUT / "auditoria.log"
         for cfg, rep in plano(nome, a.cenario, a.reps):
             if cfg["run_id"] in feitos:
                 continue
@@ -262,9 +332,20 @@ def main():
                 tr = linha.get("trava_pre_ms")
                 linha["tentativa"] = tentativa
                 linha["valida"] = int(tr is not None and tr <= TRAVA_MAX_MS and linha["resultado"] in ("PARADO", "COLISAO"))
-                if linha["valida"] or tentativa == 3:
+                linha["conforme"], linha["motivo_nc"] = conformidade(cfg, linha)
+                if (linha["valida"] and linha["conforme"]) or tentativa == 3:
                     break
-                print(f"  {cfg['run_id']}: inválida (trava {tr} ms, {linha['resultado']}), repetindo", flush=True)
+                print(f"  {cfg['run_id']}: refazendo (trava {tr} ms, {linha['resultado']}, {linha['motivo_nc']})", flush=True)
+            bloco.append(linha)
+            if len(bloco) >= AUDITORIA_CADA:
+                ok = auditar(saida, bloco, log_aud)
+                bloco = []
+                if not ok:
+                    w.writerow({k: linha.get(k) for k in CAMPOS})
+                    print("CAMPANHA INTERROMPIDA pela auditoria: conformidade ou validade abaixo de "
+                          f"{100 * CONFORMIDADE_MIN:.0f}% no último bloco (ver {log_aud.name})", flush=True)
+                    set_cfg(dict(run_id="", delay_ms=0))
+                    sys.exit(2)
             w.writerow({k: linha.get(k) for k in CAMPOS})
             f.flush()
             print(f"{linha['run_id']}: {linha['resultado']} gap={linha.get('gap_final_m')} v={linha.get('v_final_kmh')} "
@@ -272,6 +353,8 @@ def main():
                   f"off={linha.get('ecu_off')} ({linha.get('dur_s')} s)", flush=True)
             if linha["resultado"] in ("ERRO_API", "NAO_INICIOU"):
                 time.sleep(5)
+        if bloco:
+            auditar(saida, bloco, log_aud)
     set_cfg(dict(run_id="", delay_ms=0))
 
 
