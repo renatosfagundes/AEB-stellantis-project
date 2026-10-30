@@ -72,6 +72,7 @@ class Perturbacao:
         # ordering policy state
         self.buf = []                  # frames that already "arrived" (t_due passed) but are held by the policy
         self.max_t = -1.0
+        self.liberado = -1.0
         self.K = 0.0
         self.dropped = 0
         self.forwarded = 0
@@ -101,7 +102,7 @@ class Perturbacao:
         with self.cv:
             self.cfg = novo
             self.rng = random.Random(int(novo.get("seed", 1)))
-            self.heap, self.buf, self.max_t, self.K = [], [], -1.0, 0.0
+            self.heap, self.buf, self.max_t, self.K, self.liberado = [], [], -1.0, 0.0, -1.0
             self.dropped = self.forwarded = 0
             with self.log_lock:
                 if self.log:
@@ -203,7 +204,9 @@ class Perturbacao:
                     self.max_t = t_in
                     self.buf.append((t_in, data, src))
                     continue
-                tarde = t_in < self.max_t - self.K          # chegou depois da folga atual: tardio
+                # tardio: chegou depois da folga atual, ou é mais antigo que algo já liberado
+                # (entregá-lo quebraria a ordem; o K-slack descarta)
+                tarde = t_in < self.max_t - self.K or t_in < self.liberado
                 self.K = max(self.K, self.max_t - t_in)     # a folga aprende com ele para os próximos
                 if tarde:
                     self._logar(t_in, None, data, 1)
@@ -214,6 +217,8 @@ class Perturbacao:
             marca = max(self.max_t - self.K, now - self.K - 0.02)
             prontos = sorted([f for f in self.buf if f[0] <= marca], key=lambda f: f[0])
             self.buf = [f for f in self.buf if f[0] > marca]
+            if prontos:
+                self.liberado = max(self.liberado, prontos[-1][0])
             return prontos
         return [(t_in, data, src) for (_, _, t_in, data, src) in chegados]
 

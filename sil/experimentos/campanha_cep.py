@@ -67,7 +67,7 @@ def conformidade(cfg, linha):
     else:
         # watermark deve entregar tudo em ordem; o K-slack daqui libera por tempo limite (espera limitada),
         # o que deixa passar uma desordem residual pequena, aceita até 2 %
-        tol = 0.02 if pol == "kslack" else 0.005
+        tol = 0.005
         if fo > tol:
             return 0, f"política {pol} entregou {100 * fo:.1f}% fora de ordem"
         if pol == "watermark" and linha.get("descartados", 0) == 0:
