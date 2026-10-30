@@ -86,6 +86,8 @@ def main():
         fig.savefig(OUT / f"fig_sil_h1a_{a.cenario}.png", dpi=160)
 
     h1b = OUT / f"h1b_{a.cenario}.csv"
+    if not h1b.exists():
+        h1b = OUT / f"h1b_red_{a.cenario}.csv"
     if h1b.exists():
         rs = ler(h1b)
         md.append(f"\n\n## H1b: desordenação isolada ({len(rs)} rodadas válidas; latência média {100} ms)\n")

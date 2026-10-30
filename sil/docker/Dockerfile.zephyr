@@ -37,7 +37,17 @@ RUN apt-get update && apt-get install -y \
 FROM base AS zephyr-setup
 
 WORKDIR /opt/zephyrproject
-RUN west init -m https://github.com/zephyrproject-rtos/zephyr --mr v3.6.0 && \
+# Shallow clone of the v3.6.0 tag only (the full-history clone done by
+# `west init -m` is >1 GB and fails on slow/unstable links), then a local
+# west workspace. native_sim needs no HAL modules, so the project filter
+# skips them all; retries absorb transient network errors.
+RUN for i in 1 2 3; do \
+        rm -rf zephyr && \
+        git clone --depth 1 --branch v3.6.0 https://github.com/zephyrproject-rtos/zephyr zephyr && break; \
+        echo "clone falhou (tentativa $i), repetindo"; sleep 10; \
+    done && test -d zephyr/.git && \
+    west init -l zephyr && \
+    west config manifest.project-filter -- '-.*' && \
     west update --narrow -o=--depth=1
 
 ENV ZEPHYR_BASE=/opt/zephyrproject/zephyr

@@ -43,6 +43,10 @@ services:
     environment:
       - DISPLAY=:1
       - ROS_DOMAIN_ID=0
+      # No online model database: the world references model://cow, which is
+      # not bundled; on networks that block gazebosim.org gzserver hangs at
+      # world load waiting for the download. Missing models are just skipped.
+      - GAZEBO_MODEL_DATABASE_URI=
       - CAN_TCP_HOST=10.99.0.10
       - CAN_TCP_PORT=29536
     networks:

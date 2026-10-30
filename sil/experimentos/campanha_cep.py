@@ -188,13 +188,14 @@ def plano(nome, cenario, reps):
         for rep in range(reps):
             for d in ATRASOS_MS:
                 yield dict(run_id=f"h1a_{cenario}_d{d:04d}_r{rep:02d}", delay_ms=d, seed=100 + rep), rep
-    elif nome == "h1b":
+    elif nome in ("h1b", "h1b_red"):
+        dists = DISTANCIAS if nome == "h1b" else {"200-600": DISTANCIAS["200-600"]}
         for rep in range(reps):
-            for dnome, dist in DISTANCIAS.items():
+            for dnome, dist in dists.items():
                 for p in FRACOES:
                     base = LAT_MEDIA_H1B - p * (dist[0] + dist[1]) / 2
                     for pol in POLITICAS:
-                        if p == 0.0 and dnome != "40-200":
+                        if p == 0.0 and dnome != next(iter(dists)):
                             continue    # 0 % é igual nas duas distâncias
                         yield dict(run_id=f"h1b_{cenario}_{dnome}_p{int(p*100):02d}_{pol}_r{rep:02d}", delay_ms=base,
                                    p_disorder=p, disorder_ms=dist, policy=pol, watermark_ms=150, seed=200 + rep), rep
