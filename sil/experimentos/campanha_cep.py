@@ -39,7 +39,9 @@ FRACOES = (0.0, 0.05, 0.10, 0.20)
 
 CAMPOS = ["campanha", "cenario", "rep", "run_id", "delay_ms", "p_disorder", "disorder", "policy", "seed", "resultado",
           "gap_final_m", "v_final_kmh", "t_inicio", "t_ttc3", "t_ttc1p8", "t_brake", "t_L2", "t_L3", "lat_brake_ms",
-          "frames_percepcao", "frames_entregues", "descartados", "lacunas_60ms", "ecu_off", "max_mode", "dur_s", "erro"]
+          "frames_percepcao", "frames_entregues", "descartados", "lacunas_60ms", "ecu_off", "max_mode", "dur_s", "erro",
+          "trava_pre_ms", "valida", "tentativa"]
+TRAVA_MAX_MS = 100.0
 
 
 # ---------------------------------------------------------------- API
@@ -91,6 +93,10 @@ def analisar_log(path):
                 v_ego = u(data, 0, 16) * 0.01
             elif cid == 0x120:
                 if t0 is None:
+                    # o log começa durante o reset, ainda com o ego parado perto do alvo da rodada anterior;
+                    # a rodada só "começa" quando a distância salta para > 60 m (teleporte do alvo do novo cenário)
+                    if u(data, 0, 16) * 0.01 < 60:
+                        continue
                     t0 = t_in
                 res["frames_percepcao"] += 1
                 if dropped:
@@ -122,6 +128,20 @@ def analisar_log(path):
                 if u(data, 0, 8) == 0 and res["t_ttc3"] is not None:
                     res["ecu_off"] = 1
     res["t_inicio"] = 0.0 if t0 is not None else None
+    # Validade da rodada: a percepção (entrada do relé, antes de qualquer perturbação) não pode ter
+    # travado nos 3 s antes do TTC crítico. Travas do Gazebo no arranque derrubam a ECU por timeout
+    # independentemente do fator experimental.
+    res["trava_pre_ms"] = None
+    if res["t_ttc3"] is not None:
+        ts = []
+        with open(path, encoding="utf-8") as f:
+            next(f)
+            for line in f:
+                p = line.split(",")
+                if len(p) >= 6 and p[2] == "288":
+                    ts.append(float(p[0]) - t0)
+        jan = sorted(t for t in ts if res["t_ttc3"] - 3.0 <= t <= res["t_ttc3"])
+        res["trava_pre_ms"] = round(max((b - a for a, b in zip(jan, jan[1:])), default=0.0) * 1000, 1)
     return res
 
 
@@ -132,13 +152,16 @@ def rodar(campanha, cenario, rep, cfg, timeout_inicio=60, timeout_fim=90):
                  p_disorder=cfg.get("p_disorder", 0.0), disorder="-".join(str(x) for x in cfg.get("disorder_ms", [0, 0])),
                  policy=cfg.get("policy", "arrival"), seed=cfg.get("seed", 1), erro="")
     t_run0 = time.time()
-    set_cfg(dict(cfg, run_id=""))                     # sem log durante o reset, para não poluir
+    # A perturbação (e o log) são ligados ANTES do start: o POST /scenarios/start leva vários segundos
+    # (reset do mundo, chamadas ros2 CLI, reinício da ECU) e o ego começa a andar no meio dele. Ligar a
+    # perturbação depois fazia o atraso entrar de repente no meio da aproximação; o salto criava uma
+    # lacuna na entrega, a supervisão de 60 ms da ECU a desligava e a FSM recomeçava do WARNING.
+    set_cfg(cfg)
     try:
         http("POST", "/scenarios/start", {"scenario": cenario}, timeout=60)
     except Exception as e:
         linha.update(resultado="ERRO_API", erro=str(e)[:80])
         return linha
-    set_cfg(cfg)                                      # liga o log e a perturbação para esta rodada
     # espera começar (live.time > 0)
     t_espera = time.time()
     while True:
@@ -184,6 +207,15 @@ def plano(nome, cenario, reps):
     if nome == "smoke":
         yield dict(run_id=f"smoke_{cenario}", delay_ms=0, seed=1), 0
         return
+    if nome == "rapido":
+        # Plano reduzido: H1a com 6 níveis e H1b com 20 % de desordem (200-600 ms) nas 3 políticas.
+        for rep in range(reps):
+            for d in (0, 100, 200, 400, 600, 800):
+                yield dict(run_id=f"rap_h1a_{cenario}_d{d:04d}_r{rep:02d}", delay_ms=d, seed=100 + rep), rep
+            for pol in POLITICAS:
+                yield dict(run_id=f"rap_h1b_{cenario}_p20_{pol}_r{rep:02d}", delay_ms=LAT_MEDIA_H1B - 0.2 * 400,
+                           p_disorder=0.2, disorder_ms=[200, 600], policy=pol, watermark_ms=150, seed=200 + rep), rep
+        return
     if nome == "h1a":
         for rep in range(reps):
             for d in ATRASOS_MS:
@@ -225,7 +257,14 @@ def main():
         for cfg, rep in plano(nome, a.cenario, a.reps):
             if cfg["run_id"] in feitos:
                 continue
-            linha = rodar(nome, a.cenario, rep, cfg)
+            for tentativa in range(1, 4):
+                linha = rodar(nome, a.cenario, rep, cfg)
+                tr = linha.get("trava_pre_ms")
+                linha["tentativa"] = tentativa
+                linha["valida"] = int(tr is not None and tr <= TRAVA_MAX_MS and linha["resultado"] in ("PARADO", "COLISAO"))
+                if linha["valida"] or tentativa == 3:
+                    break
+                print(f"  {cfg['run_id']}: inválida (trava {tr} ms, {linha['resultado']}), repetindo", flush=True)
             w.writerow({k: linha.get(k) for k in CAMPOS})
             f.flush()
             print(f"{linha['run_id']}: {linha['resultado']} gap={linha.get('gap_final_m')} v={linha.get('v_final_kmh')} "

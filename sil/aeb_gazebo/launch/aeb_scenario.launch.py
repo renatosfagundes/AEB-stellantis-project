@@ -54,6 +54,9 @@ def _launch_nodes(context):
         launch_arguments={
             'world': world_file,
             'verbose': 'false',
+            # gui:=false skips gzclient (software-rendered GUI, ~5 CPU cores in Docker);
+            # experiments do not need it and its load perturbs the timing being measured.
+            'gui': context.launch_configurations.get('gui', 'true'),
         }.items()
     )
 

@@ -47,6 +47,8 @@ services:
       # not bundled; on networks that block gazebosim.org gzserver hangs at
       # world load waiting for the download. Missing models are just skipped.
       - GAZEBO_MODEL_DATABASE_URI=
+      # AEB_GUI=false on the host skips gzclient (used by the experiment campaigns)
+      - AEB_GUI=${AEB_GUI:-true}
       - CAN_TCP_HOST=10.99.0.10
       - CAN_TCP_PORT=29536
     networks:
@@ -81,7 +83,7 @@ services:
         sleep 1
 
         echo "=== Launching AEB scenario ==="
-        exec ros2 launch aeb_gazebo aeb_scenario.launch.py scenario:=ccrs_40 gui:=true
+        exec ros2 launch aeb_gazebo aeb_scenario.launch.py scenario:=ccrs_40 gui:=$${AEB_GUI:-true}
     healthcheck:
       test: ["CMD", "bash", "-c", "source /opt/ros/humble/setup.bash && source /ws/install/setup.bash && ros2 topic list"]
       interval: 5s
