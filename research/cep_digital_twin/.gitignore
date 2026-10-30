@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+node_modules/
+artigo/node_modules/
+artigo/package-lock.json
+artigo/*.pdf
+pacote_drive/
+pacote_drive.zip
+resultados/run_full.log
+resultados/resumo_anterior.md
+resultados_h1/*.log
+*.html.tmp
+artigo/*.docx

@@ -1,0 +1,51 @@
+classDiagram
+    direction TB
+
+    class Veiculo {
+        sensores radar, lidar, câmera
+        ECU_AEB
+        ECU_Freio
+    }
+    class MensagemCAN {
+        id, timestamp
+        latência, MAC
+    }
+    class GemeoDigital {
+        <<abstract>>
+        estadoEspelhado
+        MotorCEP
+    }
+    class GemeoDigitalLocal {
+        roda numa ECU do veículo
+        reação em ms
+        funciona sem rede
+        +gravarSnapshot()
+    }
+    class GemeoDigitalNuvem {
+        espelha a frota
+        histórico de meses
+        +analisarTendencia()
+        +compararFrota()
+    }
+    class RegraCEP {
+        <<abstract>>
+        janela + limiar
+        +avaliar(evento)
+    }
+    class EventoComplexo {
+        cenário + detalhe
+    }
+    class Gestao {
+        +decidir() OTA / manutenção / recall
+    }
+
+    Veiculo "1" --> "*" MensagemCAN : publica
+    MensagemCAN --> GemeoDigitalLocal : eventos simples
+    GemeoDigital <|-- GemeoDigitalLocal
+    GemeoDigital <|-- GemeoDigitalNuvem
+    GemeoDigital *-- RegraCEP : executa
+    RegraCEP ..> EventoComplexo : produz
+    GemeoDigitalLocal --> GemeoDigitalNuvem : eventos complexos, snapshots, KPIs
+    GemeoDigitalNuvem ..> GemeoDigitalLocal : OTA de regras e limiares
+    GemeoDigitalNuvem --> Gestao : painel e alertas
+    Gestao ..> Veiculo : ação

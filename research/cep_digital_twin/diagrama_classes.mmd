@@ -1,0 +1,210 @@
+classDiagram
+    direction LR
+
+    namespace MundoReal {
+        class Veiculo {
+            +String vin
+            +String versaoSW
+            +float velocidade
+        }
+        class ECU {
+            <<abstract>>
+            +String nome
+            +int idCAN
+            +String versaoFirmware
+            +publicar(MensagemCAN m) void
+        }
+        class Radar {
+            +float distancia
+            +float ttc
+            +float confianca
+        }
+        class Lidar {
+            +float distancia
+        }
+        class Camera {
+            +String classeObjeto
+            +float confianca
+        }
+        class ECU_AEB {
+            +float limiarTTC
+            +decidirFrenagem() bool
+        }
+        class ECU_Freio {
+            +float desaceleracao
+            +aplicarFreio(float decel) void
+        }
+        class ECU_Hospedeira {
+            +String particao
+            +float cpuLivre
+        }
+        class Barramento {
+            +float carga
+            +int msgsPerdidas
+            +transmitir(MensagemCAN m) void
+        }
+        class MensagemCAN {
+            +int id
+            +int aliveCounter
+            +bool macValido
+            +float latenciaMs
+            +float timestamp
+        }
+        class Motorista {
+            +float tempoReacao
+            +frear() void
+        }
+        class AlertaHMI {
+            +String tipo
+            +float timestamp
+        }
+    }
+
+    namespace GemeosDigitais {
+        class GemeoDigital {
+            <<abstract>>
+            +Map estadoEspelhado
+            +receber(Evento e) void
+        }
+        class GemeoDigitalLocal {
+            +float latenciaMaxMs
+            +int bufferSeg
+            +gravarSnapshot(EventoComplexo ec) Snapshot
+            +agregarKPIs() ResumoKPI
+        }
+        class GemeoDigitalNuvem {
+            +Map veiculosEspelhados
+            +analisarTendencia(String vin, int dias) void
+            +compararFrota() void
+            +simularWhatIf(Snapshot s) void
+        }
+        class Evento {
+            +float t
+            +String tipo
+            +String origem
+            +Map dados
+        }
+        class MotorCEP {
+            +processar(Evento e) List~EventoComplexo~
+        }
+        class RegraCEP {
+            <<abstract>>
+            +String nome
+            +float janelaSeg
+            +float debounceSeg
+            +avaliar(Evento e, GemeoDigital dt) List~EventoComplexo~
+        }
+        class RegraFrenagemTardia
+        class RegraFrenagemFantasma
+        class RegraAtaqueCibernetico
+        class RegraDegradacaoBarramento
+        class RegraSaudeRede
+        class RegraDegradacaoSensor
+        class RegraComportamentoMotorista
+        class EventoComplexo {
+            +float t
+            +String detalhe
+        }
+        class Snapshot {
+            +float tInicio
+            +float tFim
+            +List~Evento~ eventos
+        }
+        class ResumoKPI {
+            +float latenciaP95
+            +float cargaMedia
+            +int msgsPerdidas
+            +int alertas
+        }
+        class CanalTelemetria {
+            +String protocolo
+            +bool conectado
+            +enviar(Object pacote) void
+            +bufferizarOffline() void
+        }
+        class Parametro {
+            +String nome
+            +float limiar
+            +String unidade
+        }
+    }
+
+    namespace Governanca {
+        class CenarioGovernanca {
+            +String nome
+            +TipoCenario tipo
+            +String acaoPrevista
+        }
+        class TipoCenario {
+            <<enumeration>>
+            OPERACAO_NORMAL
+            RISCO_PREVENTIVO
+            RISCO_REATIVO
+        }
+        class Gestao {
+            +decidir(EventoComplexo ec) AcaoGovernanca
+        }
+        class AcaoGovernanca {
+            +String descricao
+            +String responsavel
+            +float prazoHoras
+        }
+    }
+
+    %% Mundo real
+    Veiculo "1" *-- "1..*" ECU : possui
+    Veiculo "1" *-- "1" Barramento : possui
+    ECU <|-- Radar
+    ECU <|-- Lidar
+    ECU <|-- Camera
+    ECU <|-- ECU_AEB
+    ECU <|-- ECU_Freio
+    ECU <|-- ECU_Hospedeira
+    ECU "1" --> "*" MensagemCAN : publica
+    Barramento "1" o-- "*" MensagemCAN : transporta
+    ECU_AEB ..> ECU_Freio : comanda
+    ECU_AEB ..> AlertaHMI : emite
+    Motorista ..> AlertaHMI : recebe
+    Motorista "1" --> "1" Veiculo : dirige
+
+    %% Dois gêmeos
+    GemeoDigital <|-- GemeoDigitalLocal
+    GemeoDigital <|-- GemeoDigitalNuvem
+    GemeoDigital "1" *-- "1" MotorCEP
+    ECU_Hospedeira "1" --> "1" GemeoDigitalLocal : hospeda
+    GemeoDigitalLocal "1" --> "1" Veiculo : espelha em tempo real
+    GemeoDigitalNuvem "1" --> "*" Veiculo : espelha a frota
+
+    %% Mundo real -> DT local -> nuvem
+    MensagemCAN ..> Evento : convertida em
+    GemeoDigitalLocal "1" --> "*" Evento : recebe
+    GemeoDigitalLocal "1" --> "1" CanalTelemetria : envia
+    CanalTelemetria "*" --> "1" GemeoDigitalNuvem : entrega
+    GemeoDigitalLocal ..> Snapshot : grava
+    GemeoDigitalLocal ..> ResumoKPI : agrega
+    CanalTelemetria ..> EventoComplexo : transporta
+    CanalTelemetria ..> Snapshot : transporta
+    CanalTelemetria ..> ResumoKPI : transporta
+    GemeoDigitalNuvem ..> CanalTelemetria : OTA de regras e limiares
+
+    %% CEP (as 4 primeiras rodam no local, as 3 últimas na nuvem)
+    MotorCEP "1" *-- "*" RegraCEP
+    RegraCEP <|-- RegraFrenagemTardia : local
+    RegraCEP <|-- RegraFrenagemFantasma : local
+    RegraCEP <|-- RegraAtaqueCibernetico : local
+    RegraCEP <|-- RegraDegradacaoBarramento : local
+    RegraCEP <|-- RegraSaudeRede : nuvem
+    RegraCEP <|-- RegraDegradacaoSensor : nuvem
+    RegraCEP <|-- RegraComportamentoMotorista : nuvem
+    RegraCEP "1" --> "*" Parametro : usa limiares
+    RegraCEP ..> EventoComplexo : produz
+    EventoComplexo "*" --> "1..*" Evento : correlaciona
+    Snapshot "*" --> "1" EventoComplexo : contexto de
+
+    %% DT -> Governança
+    EventoComplexo "*" --> "1" CenarioGovernanca : dispara
+    CenarioGovernanca --> TipoCenario
+    GemeoDigitalNuvem ..> Gestao : painel e alertas
+    Gestao ..> EventoComplexo : avalia
+    Gestao "1" --> "*" AcaoGovernanca : decide
+    AcaoGovernanca ..> Veiculo : OTA / manutenção / recall
