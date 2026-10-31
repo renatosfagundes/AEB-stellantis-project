@@ -36,8 +36,12 @@ WARNING_MIN, HYST = 0.8, 0.2
 V_REL_MIN, DT_ECU, DT_PERC = 0.5, 0.010, 0.020
 ROC_LIMIT, FAULT_CYCLES = 10.0, 3
 R_LIDAR, R_RADAR_D, R_RADAR_V, Q_D, Q_V = 0.0025, 0.09, 0.01, 1e-4, 1e-5
-STANDBY, WARNING, L1, L2, L3 = 1, 2, 3, 4, 5
-NOME = {1: "STANDBY", 2: "WARNING", 3: "L1", 4: "L2", 5: "L3"}
+OFF, STANDBY, WARNING, L1, L2, L3 = 0, 1, 2, 3, 4, 5
+NOME = {0: "OFF", 1: "STANDBY", 2: "WARNING", 3: "L1", 4: "L2", 5: "L3"}
+# Supervisão de comunicação do firmware (aeb_can.c): sem quadro de percepção por >= 6 ciclos (60 ms)
+# a ECU sinaliza falha e a FSM vai para OFF (freio liberado); no próximo quadro válido a falha some e a
+# FSM volta a STANDBY, de onde precisa passar de novo pelo WARNING (0,8 s) antes de frear.
+SUPERVISAO_S = 0.060
 
 CFG = dict(gap0=95.5, sigma=0.25, limite_ms=100.0, t_max=30.0, a_max=6.0)   # gap0: alvo em 100 m menos 4,5 m de carroceria (SIL)
 ATRASOS_MS = (0, 25, 50, 100, 200, 400, 600, 800, 1000)
@@ -55,6 +59,8 @@ class ECU:
         self.prev_d = None
         self.transicoes = []                # (t, de, para)
         self.liberacoes_espurias = 0        # descida de nível enquanto a verdade ainda exige o nível
+        self.ult_rx = None                  # instante do último quadro de percepção recebido
+        self.desligamentos = 0              # entradas em OFF pela supervisão de comunicação
 
     def _predict(self):
         if self.x is None:
@@ -127,10 +133,17 @@ class ECU:
         if self.fault or self.x is None:
             self.pct = 0.0
             return 0.0
+        if SUPERVISAO_S is not None and self.ult_rx is not None and t - self.ult_rx >= SUPERVISAO_S - 1e-9:
+            if self.state != OFF:
+                self.transicoes.append((t, self.state, OFF))
+                self.desligamentos += 1
+                self.state, self.timer = OFF, 0.0
+            self.pct = 0.0
+            return 0.0
         des = self.desejado(max(self.x[0], 0.5), v_ego, self.x[1])
         s = self.state
         novo = s
-        if s == STANDBY:
+        if s in (OFF, STANDBY):
             if des >= WARNING:
                 novo, self.timer = WARNING, 0.0
         elif s == WARNING:
@@ -197,22 +210,29 @@ class KSlack:
     """K-slack adaptativo: libera eventos com t <= max_t_visto - K, K = maior atraso relativo observado."""
     nome = "K-slack"
 
+    # Mesmo algoritmo do relé da bancada (sil/docker/canbus/can_tcp_server.py): folga K aprendida com o
+    # maior atraso relativo, liberação também por tempo limite (agora - K - 20 ms) e descarte de qualquer
+    # evento mais antigo que o último liberado, o que garante entrega ordenada com espera limitada.
     def __init__(self, **_):
-        self.K, self.max_t, self.buf, self.espera, self.descartados = 0.0, -1.0, [], [], 0
+        self.K, self.max_t, self.buf, self.espera, self.descartados, self.liberado = 0.0, -1.0, [], [], 0, -1.0
 
     def liberar(self, chegados, agora):
         for ev in chegados:
             if ev["t"] > self.max_t:
                 self.max_t = ev["t"]
-            else:
-                self.K = max(self.K, self.max_t - ev["t"])
-            if ev["t"] < self.max_t - self.K - 1e-9:
+                self.buf.append(ev)
+                continue
+            tarde = ev["t"] < self.max_t - self.K - 1e-9 or ev["t"] < self.liberado - 1e-9
+            self.K = max(self.K, self.max_t - ev["t"])
+            if tarde:
                 self.descartados += 1
                 continue
             self.buf.append(ev)
-        marca = self.max_t - self.K
+        marca = max(self.max_t - self.K, agora - self.K - 0.02)
         prontos = sorted((e for e in self.buf if e["t"] <= marca + 1e-9), key=lambda e: e["t"])
         self.buf = [e for e in self.buf if e["t"] > marca + 1e-9]
+        if prontos:
+            self.liberado = max(self.liberado, prontos[-1]["t"])
         for e in prontos:
             self.espera.append(agora - e["chegada"])
         return prontos
@@ -289,6 +309,7 @@ def rodar(v0_kmh, seed, atraso_ms=0.0, jitter_ms=0.0, p_desordem=0.0, dist_desor
                 dist_pos.append(n_antes)
         for e in est.liberar(chegados, t):
             ecu.medir(e["d"], e["v_rel"])
+            ecu.ult_rx = t
         nivel_verdade = ecu.desejado(gap, v0, v) if v > V_REL_MIN else STANDBY
         a_cmd = ecu.passo(t, v, nivel_verdade)
         if ecu.state >= L1 and t_cmd is None:
@@ -350,6 +371,7 @@ def rodar(v0_kmh, seed, atraso_ms=0.0, jitter_ms=0.0, p_desordem=0.0, dist_desor
         lat_L2_ms=None if lat[L2] is None else round(lat[L2] * 1000, 1), margem_s=None if margem is None else round(margem, 3),
         excede_limite=int(lat[L1] is not None and lat[L1] * 1000 > CFG["limite_ms"]) if lat[L1] is not None else 1,
         niveis_perdidos=perdidos, liberacoes_espurias=ecu.liberacoes_espurias, n_transicoes=len(ecu.transicoes),
+        desligamentos=ecu.desligamentos,
         falha_sensor=int(ecu.fault), eventos_fora_ordem=n_fora, dist_desordem_ms=round(mean(dist_ms), 1) if dist_ms else 0.0,
         dist_desordem_pos=round(mean(dist_pos), 2) if dist_pos else 0.0, espera_media_ms=round(mean(est.espera) * 1000, 1) if est.espera else 0.0,
         descartados=est.descartados,
