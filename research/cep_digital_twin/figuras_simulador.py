@@ -32,37 +32,37 @@ def seta(ax, a, b, cor=CINZA, estilo="-", txt="", dy=0.14, fs=7):
 
 def pipeline():
     fig, ax = plt.subplots(figsize=(7.4, 5.0))
-    ax.set_xlim(0, 13); ax.set_ylim(0, 8.6); ax.axis("off")
-    caixa(ax, 0.3, 5.3, 3.2, 3.0, "Gerador (semente)",
-          ["240 s a 20 Hz: radar, lidar,", "mensagem CAN, barramento,", "motorista", "Injeta 6 falhas em instantes", "sorteados", "→ eventos + verdade de ref."],
-          cor=VERDE, fill="#f3faf5")
-    caixa(ax, 0.3, 0.6, 3.2, 3.6, "Rede (perfil × offline)",
-          ["atraso gaussiano + jitter", "perda com reenvio QoS 1", "janela offline sorteada", "buffer 128 KB (descarta", "o mais antigo), dreno", "50 KB/s ao reconectar"],
-          cor=LAR, fill="#fdf6ec")
-    # A0
-    caixa(ax, 4.6, 5.3, 3.9, 3.0, "A0: gêmeo só na nuvem",
-          ["eventos brutos (64 B) → rede", "reordenação por timestamp", "(limite L = atraso + 3·jitter)", "7 regras CEP sobre brutos", "evidência: brutos em ±3 s"],
-          cor=CINZA, fill="#f4f4f6")
-    # A1
-    caixa(ax, 4.6, 0.6, 3.9, 3.6, "A1: gêmeo local + nuvem",
-          ["borda: 4 regras rápidas (5 ms)", "→ evento complexo (256 B),", "   snapshot ±3 s (32 B/ev),", "   agregado de 1 s (96 B)", "rede → nuvem: 3 regras de", "janela longa sobre agregados"],
-          cor=AZUL, fill="#eef4fa")
-    caixa(ax, 9.6, 3.0, 3.1, 3.6, "Medição por falha",
-          ["detectado?", "latência de decisão", "latência até a gestão", "completude da trilha", "tempo até a evidência", "+ falsos positivos, bytes,", "   descartes, KPI"],
-          cor=VERM, fill="#fbf1ef")
-    caixa(ax, 9.6, 0.6, 3.1, 1.7, "Saídas",
-          ["por_cenario.csv, por_rodada.csv", "resumo.md, figuras"], cor=VERM, fill="#fbf1ef")
-    seta(ax, (3.5, 6.8), (4.6, 6.8), cor=VERDE, txt="eventos")
-    seta(ax, (3.5, 6.4), (4.6, 2.4), cor=VERDE)
-    seta(ax, (3.5, 2.4), (4.6, 6.2), cor=LAR)
-    seta(ax, (3.5, 2.0), (4.6, 2.0), cor=LAR, txt="rede")
-    seta(ax, (8.5, 6.8), (9.6, 5.6), cor=CINZA, txt="decisões", dy=0.2)
-    seta(ax, (8.5, 2.4), (9.6, 3.8), cor=AZUL, txt="decisões", dy=-0.5)
-    seta(ax, (11.15, 3.0), (11.15, 2.3), cor=VERM)
-    seta(ax, (1.9, 5.3), (1.9, 4.2), cor=VERDE, estilo="--", txt="")
-    ax.text(2.05, 4.75, "verdade de\nreferência", fontsize=7, color=VERDE, va="center")
-    ax.text(6.5, 4.75, "mesma semente, mesmos eventos: comparação pareada", fontsize=7.2, color="#333", ha="center", va="center", style="italic")
-    ax.text(6.5, 0.2, "Plano fatorial: 2 arquiteturas × 3 redes × 3 janelas offline × 20 sementes = 360 rodadas", fontsize=7.4, color="#333", ha="center")
+    ax.set_xlim(0, 15); ax.set_ylim(-0.4, 8.6); ax.axis("off")
+    fs = 6.6
+    caixa(ax, 0.1, 5.3, 3.9, 3.0, "Gerador (semente)",
+          ["240 s a 20 Hz: radar, lidar,", "mensagem CAN, barramento,", "motorista", "injeta 6 falhas em", "instantes sorteados", "→ eventos + verdade de ref."],
+          cor=VERDE, fill="#f3faf5", fs=fs)
+    caixa(ax, 0.1, 0.6, 3.9, 3.6, "Rede (perfil × offline)",
+          ["atraso gaussiano + jitter", "perda com reenvio QoS 1", "janela offline sorteada", "buffer de 128 KB", "(descarta o mais antigo)", "dreno a 50 KB/s"],
+          cor=LAR, fill="#fdf6ec", fs=fs)
+    caixa(ax, 5.2, 5.3, 4.4, 3.0, "A0: gêmeo só na nuvem",
+          ["eventos brutos (64 B) → rede", "reordenação por timestamp", "(L = atraso + 3·jitter)", "7 regras CEP sobre brutos", "evidência: brutos em ±3 s"],
+          cor=CINZA, fill="#f4f4f6", fs=fs)
+    caixa(ax, 5.2, 0.6, 4.4, 3.6, "A1: gêmeo local + nuvem",
+          ["borda: 4 regras rápidas (5 ms)", "→ evento complexo (256 B),", "   snapshot ±3 s (32 B/ev),", "   agregado de 1 s (96 B)", "nuvem: 3 regras de janela", "longa sobre agregados"],
+          cor=AZUL, fill="#eef4fa", fs=fs)
+    caixa(ax, 10.8, 3.0, 4.1, 3.6, "Medição por falha",
+          ["detectado?", "latência de decisão", "latência até a gestão", "completude da trilha", "tempo até a evidência", "falsos positivos, bytes,", "descartes, KPI"],
+          cor=VERM, fill="#fbf1ef", fs=fs)
+    caixa(ax, 10.8, 0.6, 4.1, 1.9, "Saídas",
+          ["por_cenario.csv", "por_rodada.csv", "resumo.md, figuras"], cor=VERM, fill="#fbf1ef", fs=fs)
+    seta(ax, (4.0, 7.3), (5.2, 7.3), cor=VERDE, txt="eventos")
+    seta(ax, (4.0, 6.0), (5.2, 2.6), cor=VERDE)
+    seta(ax, (4.0, 2.8), (5.2, 5.6), cor=LAR)
+    seta(ax, (4.0, 1.4), (5.2, 1.4), cor=LAR, txt="rede")
+    seta(ax, (9.6, 6.8), (10.8, 5.8), cor=CINZA, txt="decisões", dy=0.2)
+    seta(ax, (9.6, 2.4), (10.8, 3.6), cor=AZUL, txt="decisões", dy=-0.55)
+    seta(ax, (12.85, 3.0), (12.85, 2.5), cor=VERM)
+    seta(ax, (2.05, 5.3), (2.05, 4.2), cor=VERDE, estilo="--", txt="")
+    ax.text(2.2, 4.75, "verdade de\nreferência", fontsize=6.5, color=VERDE, va="center")
+    ax.text(7.5, 0.05, "Plano fatorial: 2 arquiteturas × 3 redes × 3 janelas offline × 20 sementes = 360 rodadas",
+            fontsize=6.8, color="#333", ha="center")
+    ax.text(7.5, -0.35, "mesma semente, mesmos eventos em A0 e A1 (comparação pareada)", fontsize=6.8, color="#333", ha="center", style="italic")
     fig.tight_layout()
     fig.savefig(OUT / "fig_pipeline.png", dpi=170)
 
