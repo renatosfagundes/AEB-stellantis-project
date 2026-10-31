@@ -10,12 +10,16 @@ import sys
 from pathlib import Path
 
 import fitz
+import os
 
 AQUI = Path(__file__).resolve().parent
 OUT = AQUI / "resultados_tikz"
 SIL = Path(r"C:\Users\rfagu\Estudo\AEB-stellantis-project\sil\experimentos\resultados")
 MOD = AQUI / "resultados_h1"
 TECTONIC = r"C:\Users\rfagu\tools\tectonic\tectonic.exe"
+# FIG_CINZA=1: versão em escala de cinza (xcolor converte as cores; as políticas de H1b ganham tons
+# distintos), gravada com sufixo _cinza, para impressão e para o checklist do CIACA.
+CINZA = os.environ.get("FIG_CINZA") == "1"
 
 PREAMBULO = r"""\documentclass[border=4pt]{standalone}
 \usepackage[utf8]{inputenc}
@@ -48,8 +52,11 @@ ESTILOS = r"""
 
 def compilar(nome, corpo):
     OUT.mkdir(exist_ok=True)
+    if CINZA:
+        nome += "_cinza"
     tex = OUT / f"{nome}.tex"
-    tex.write_text(PREAMBULO + corpo + "\n\\end{document}\n", encoding="utf-8")
+    pre = PREAMBULO.replace(r"\usepackage[table]{xcolor}", r"\usepackage[table,gray]{xcolor}") if CINZA else PREAMBULO
+    tex.write_text(pre + corpo + "\n\\end{document}\n", encoding="utf-8")
     r = subprocess.run([TECTONIC, "--chatter", "minimal", str(tex)], cwd=OUT, capture_output=True, text=True)
     if r.returncode != 0:
         print(r.stdout[-3000:], r.stderr[-3000:])
@@ -193,6 +200,10 @@ def fig_h1b():
     pols = (("arrival", "chegada", "chegada", "gray!70!black", "o"),
             ("watermark", "watermark", "marca d'água", "ddbrown", "square*"),
             ("kslack", "kslack", "K-slack", "sectionblue", "triangle*"))
+    if CINZA:
+        pols = (("arrival", "chegada", "chegada", "black", "o"),
+                ("watermark", "watermark", "marca d'água", "gray!55", "square*"),
+                ("kslack", "kslack", "K-slack", "black", "triangle*"))
     def sil_sel(dist, p, pol):
         return [r for r in sil if abs(float(r["p_disorder"]) - p / 100) < 1e-9 and r["policy"] == pol and (r["disorder"] == dist or p == 0)]
     def mod_sel(p, est):
