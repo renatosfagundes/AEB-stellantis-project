@@ -1,5 +1,6 @@
 import shutil
-S = r"C:\Users\rfagu\AppData\Local\Temp\claude\c--Users-rfagu-Estudo\ea1b3a81-fea8-4657-be1b-6371be5e76e3\scratchpad"
+import os
+S = os.path.dirname(os.path.abspath(__file__))
 base = r"C:\Users\rfagu\Estudo\dinamica_dt_aeb\artigo"
 shutil.copy(base + r"\artigo_v6.md", base + r"\artigo_v62.md")
 p = base + r"\artigo_v62.md"

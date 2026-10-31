@@ -37,11 +37,30 @@ py -3.12 analise_campanha.py
 ## Métricas por rodada
 
 `resultado` (PARADO / COLISAO), `gap_final_m`, `v_final_kmh` (velocidade de impacto quando colide),
-`t_ttc3` (1ª leitura 0x120 com TTC ≤ 3 s, na entrada do relé), `t_brake` (1º 0x080 com modo ≥ L1),
+`t_ttc3` (1ª leitura 0x120 com TTC ≤ 3 s, na entrada do relé, só com quadros gerados depois do início
+da rodada), `t_brake` (1º 0x080 com modo ≥ L1),
 `lat_brake_ms` = `t_brake − t_ttc3` (comparar com a média das rodadas sem atraso), `t_L2`, `t_L3`,
 `descartados` (frames rejeitados pela política), `lacunas_60ms` (intervalos > 60 ms entre entregas de
-0x120 à ECU: risco do timeout de supervisão do firmware, que desliga o AEB), `ecu_off` (FSM em OFF
-observada após o TTC crítico), `max_mode`.
+0x120 à ECU), `max_mode`.
+
+Desligamentos (ver `desligamentos()` em `campanha_cep.py`): `ecu_off` = transição para OFF entre o
+instante crítico e o desfecho físico (menor distância real), vista no estado 0x200 (50 ms) ou no modo
+do 0x080 (10 ms); `n_off` = episódios; causa em `off_lacuna` (intervalo ≥ 50 ms sem 0x120: timeout de
+6 ticks de 10 ms do firmware), `off_salto` (quadro velho violando a plausibilidade do radar,
+|Δvr| > 2 m/s) e `off_sem_causa`. Não contam como `ecu_off`: `ecu_off_alcance` (distância entregue
+< 1,0 m, alcance mínimo do lidar, perto do contato) e `standby_baixa_vel` (queda para STANDBY abaixo
+de 10 km/h).
+
+## Reanálise de 31/10/2026
+
+A primeira versão da análise tomava o instante crítico de quadros gerados antes do início da rodada
+(ego parado perto do alvo anterior) e entregues depois, por causa do atraso extra de H1b. Isso
+inflava `lat_brake_ms` e `ecu_off` em H1b, e `ecu_off` também contava o OFF por alcance mínimo do
+lidar depois do contato (H1a com 800 e 1000 ms). Os 900 registros foram reprocessados com
+`reanalisar_logs.py` (os CSVs originais ficam em `resultados/*_v1.csv`); nenhuma rodada mudou de
+validade, e `resultado`, `gap_final_m` e `v_final_kmh` não dependem da análise.
+`diagnostico_off.py` reproduz a curva de disparo da supervisão por tamanho da lacuna e o instante do
+OFF por alcance em H1a.
 
 ## Planos
 

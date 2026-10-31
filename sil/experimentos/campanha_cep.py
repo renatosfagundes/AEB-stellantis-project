@@ -15,6 +15,7 @@ Retoma de onde parou: rodadas já presentes no CSV não são repetidas.
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import json
 import os
@@ -40,7 +41,8 @@ FRACOES = (0.0, 0.05, 0.10, 0.20)
 CAMPOS = ["campanha", "cenario", "rep", "run_id", "delay_ms", "p_disorder", "disorder", "policy", "seed", "resultado",
           "gap_final_m", "v_final_kmh", "t_inicio", "t_ttc3", "t_ttc1p8", "t_brake", "t_L2", "t_L3", "lat_brake_ms",
           "frames_percepcao", "frames_entregues", "descartados", "lacunas_60ms", "ecu_off", "max_mode", "dur_s", "erro",
-          "trava_pre_ms", "valida", "tentativa", "atraso_medido_ms", "fora_ordem_medido", "conforme", "motivo_nc"]
+          "trava_pre_ms", "valida", "tentativa", "atraso_medido_ms", "fora_ordem_medido", "conforme", "motivo_nc",
+          "ecu_off_alcance", "standby_baixa_vel", "n_off", "off_lacuna", "off_salto", "off_sem_causa"]
 TRAVA_MAX_MS = 100.0
 AUDITORIA_CADA = 20          # balanço de conformidade a cada N rodadas
 CONFORMIDADE_MIN = 0.9       # abaixo disso no bloco, a campanha para
@@ -124,10 +126,101 @@ def u(data, start, length):
     return r
 
 
+LIDAR_DIST_MIN_M = 1.0    # firmware LIDAR_DIST_MIN: d < 1,0 m por 3 ciclos -> falha de lidar -> OFF
+V_EGO_MIN_MS = 2.78       # firmware V_EGO_MIN: abaixo disso, fora de frenagem, a FSM vai a STANDBY (modo 0)
+LACUNA_TIMEOUT_S = 0.050  # can_check_timeout: 6 ticks de 10 ms sem 0x120; conforme a fase, ~50-60 ms bastam
+JANELA_CAUSA_S = 0.100    # janela antes do OFF em que se procura a causa
+VEL_ROC_MS = 2.0          # firmware VEL_ROC_LIMIT (m/s por ciclo)
+DIST_ROC_M = 10.0         # firmware DIST_ROC_LIMIT (m por ciclo)
+
+
+def desligamentos(t_ttc3, entregas, vegos, saidas_ecu, t_desfecho=None):
+    """Desligamentos da ECU (FSM em OFF) depois do instante crítico, separados do que não é efeito do canal.
+
+    O firmware só leva a FSM a OFF por bit de falha da percepção (src/decision/aeb_fsm.c, prioridade 1):
+    timeout de CAN (6 ticks de 10 ms sem 0x120), falha de plausibilidade do radar (salto de vr > 2 m/s ou
+    de d > 10 m por 3 ciclos) ou falha de alcance do lidar (d < 1,0 m por 3 ciclos; a ECU usa a mesma
+    distância de 0x120 para lidar e radar).
+
+    Janela: do instante crítico até o desfecho físico (menor distância real) ou o reset, o que vier antes.
+    Candidatos: estado 0 no status 0x200 (a cada 50 ms) ou modo do comando 0x080 (a cada 10 ms) caindo
+    de >= 1 para 0, o que pega OFFs mais curtos que 50 ms. Para cada candidato, com o que a ECU tinha
+    recebido por último (d de 0x120, v_ego de 0x100):
+      - d < 1,0 m nos 100 ms anteriores   -> ecu_off_alcance (contato ou parada a menos de 1 m; não conta)
+      - modo 0 com v_ego < 10 km/h         -> standby_baixa_vel (STANDBY legítimo perto da parada; não conta)
+      - caso contrário                     -> ecu_off: desligamento durante a aproximação
+    A causa do ecu_off é registrada à parte: off_lacuna (intervalo >= 50 ms sem 0x120 nos 100 ms
+    anteriores), off_salto (quadro entregue com salto acima dos limites de plausibilidade nos 100 ms
+    anteriores) ou off_sem_causa. n_off conta episódios separados por mais de 60 ms.
+    """
+    r = dict(ecu_off=0, ecu_off_alcance=0, standby_baixa_vel=0, n_off=0, off_lacuna=0, off_salto=0, off_sem_causa=0)
+    if t_ttc3 is None:
+        return r
+    entregas = sorted(entregas)
+    vegos = sorted(vegos)
+    saidas_ecu = sorted(saidas_ecu)
+    # fim físico da aproximação: o alvo é reposicionado (distância salta) no reset da rodada seguinte
+    fim = None
+    for a, b in zip(entregas, entregas[1:]):
+        if b[0] > t_ttc3 and b[1] > a[1] + 20.0 and b[1] > 60.0:
+            fim = b[0]
+            break
+    # só interessam OFFs antes do desfecho físico (menor distância real); depois dele nada muda o resultado
+    if t_desfecho is not None and (fim is None or t_desfecho < fim):
+        fim = t_desfecho
+    saltos = [b[0] for a, b in zip(entregas, entregas[1:])
+              if abs(b[2] - a[2]) > VEL_ROC_MS or abs(b[1] - a[1]) > DIST_ROC_M]
+    candidatos = []           # (t, origem): transições PARA OFF; um OFF que já vinha de antes (p. ex. o OFF de
+    ult_modo = ult_estado = None  # partida da ECU, que com atraso grande dura além do instante crítico) não conta
+    for t, tipo, val in saidas_ecu:
+        dentro = t >= t_ttc3 and (fim is None or t < fim)
+        if tipo == "080":
+            if dentro and val == 0 and ult_modo is not None and ult_modo >= 1:
+                candidatos.append((t, "080"))
+            ult_modo = val
+        else:
+            if dentro and val == 0 and ult_estado is not None and ult_estado != 0:
+                candidatos.append((t, "200"))
+            ult_estado = val
+    ts = [e[0] for e in entregas]
+    tv = [e[0] for e in vegos]
+    episodio_ant = None
+    for t, origem in candidatos:
+        i = bisect.bisect_right(ts, t) - 1
+        d_visto = entregas[i][1] if i >= 0 else None
+        k = bisect.bisect_right(tv, t) - 1
+        v_visto = vegos[k][1] if k >= 0 else None
+        j = bisect.bisect_left(ts, t - JANELA_CAUSA_S)
+        d_min_janela = min([e[1] for e in entregas[j:i + 1]], default=d_visto)
+        if d_min_janela is not None and d_min_janela < LIDAR_DIST_MIN_M:
+            r["ecu_off_alcance"] = 1
+            continue
+        if origem == "080" and v_visto is not None and v_visto < V_EGO_MIN_MS:
+            r["standby_baixa_vel"] = 1
+            continue
+        r["ecu_off"] = 1
+        novo = episodio_ant is None or t - episodio_ant > 0.06
+        episodio_ant = t
+        if not novo:
+            continue
+        r["n_off"] += 1
+        j = bisect.bisect_left(ts, t - JANELA_CAUSA_S)
+        janela = ts[j:i + 1]
+        lacuna = max([b - a for a, b in zip(janela, janela[1:])] + [t - ts[i] if i >= 0 else 0.0])
+        if lacuna >= LACUNA_TIMEOUT_S:
+            r["off_lacuna"] += 1
+        elif any(t - JANELA_CAUSA_S <= x <= t for x in saltos):
+            r["off_salto"] += 1
+        else:
+            r["off_sem_causa"] += 1
+    return r
+
+
 def analisar_log(path):
     """Extrai do log do relé os instantes de interesse e contadores. Tempos relativos ao 1º frame 0x120."""
     res = dict(t_inicio=None, t_ttc3=None, t_ttc1p8=None, t_brake=None, t_L2=None, t_L3=None, frames_percepcao=0,
-               frames_entregues=0, descartados=0, lacunas_60ms=0, ecu_off=0, max_mode=0,
+               frames_entregues=0, descartados=0, lacunas_60ms=0, ecu_off=0, ecu_off_alcance=0, standby_baixa_vel=0, n_off=0, off_lacuna=0, off_salto=0,
+               off_sem_causa=0, max_mode=0,
                atraso_medido_ms=None, fora_ordem_medido=None)
     if not path.exists():
         return res
@@ -149,6 +242,10 @@ def analisar_log(path):
         res["atraso_medido_ms"] = round(1000 * sum(atrasos) / len(atrasos), 1)
         res["fora_ordem_medido"] = round(fora / entregues, 3)
     t0, ult_out, v_ego = None, None, None
+    entregas = []       # (t_out, d, vr) dos 0x120 entregues à ECU, para saber o que a ECU via em cada instante
+    vegos = []          # (t_out, v_ego) dos 0x100 entregues à ECU
+    fisico = []         # (t_in, d) dos 0x120 gerados depois do início: a distância real
+    saidas_ecu = []     # (t, "080"|"200", modo/estado) emitidos pela ECU (não passam pela perturbação)
     with open(path, encoding="utf-8") as f:
         next(f)
         for line in f:
@@ -160,6 +257,8 @@ def analisar_log(path):
             cid, data, dropped = int(p[2]), bytes.fromhex(p[4]), p[5] == "1"
             if cid == 0x100:
                 v_ego = u(data, 0, 16) * 0.01
+                if t0 is not None and t_out is not None and not dropped:
+                    vegos.append((t_out - t0, v_ego))
             elif cid == 0x120:
                 if t0 is None:
                     # o log começa durante o reset, ainda com o ego parado perto do alvo da rodada anterior;
@@ -168,6 +267,7 @@ def analisar_log(path):
                         continue
                     t0 = t_in
                 res["frames_percepcao"] += 1
+                d = u(data, 0, 16) * 0.01
                 if dropped:
                     res["descartados"] += 1
                 else:
@@ -175,7 +275,13 @@ def analisar_log(path):
                     if ult_out is not None and t_out - ult_out > 0.06:
                         res["lacunas_60ms"] += 1
                     ult_out = t_out
-                d = u(data, 0, 16) * 0.01
+                    entregas.append((t_out - t0, d, u(data, 16, 16) * 0.01 - 327.68))
+                # Com atraso extra de centenas de ms, quadros gerados ANTES do início (ego ainda parado perto do
+                # alvo da rodada anterior, d pequeno) chegam depois do primeiro quadro > 60 m. Eles não fazem
+                # parte da aproximação e não podem definir o instante crítico.
+                if t_in < t0:
+                    continue
+                fisico.append((t_in - t0, d))
                 vr = u(data, 16, 16) * 0.01 - 327.68
                 v = vr if vr >= 0.5 else (v_ego or 0)
                 if d < 95 and v >= 0.5:
@@ -186,6 +292,7 @@ def analisar_log(path):
                         res["t_ttc1p8"] = t_in - t0
             elif cid == 0x080 and t0 is not None:
                 mode = u(data, 16, 3)
+                saidas_ecu.append((t_in - t0, "080", mode))
                 res["max_mode"] = max(res["max_mode"], mode)
                 if mode >= 2 and res["t_brake"] is None:
                     res["t_brake"] = t_in - t0
@@ -194,9 +301,18 @@ def analisar_log(path):
                 if mode >= 4 and res["t_L3"] is None:
                     res["t_L3"] = t_in - t0
             elif cid == 0x200 and t0 is not None:
-                if u(data, 0, 8) == 0 and res["t_ttc3"] is not None:
-                    res["ecu_off"] = 1
+                saidas_ecu.append((t_in - t0, "200", u(data, 0, 8)))
     res["t_inicio"] = 0.0 if t0 is not None else None
+    # desfecho físico: primeiro instante da menor distância real (contato ou parada); o reset da rodada
+    # seguinte só aparece depois de um salto de distância, então a busca para no primeiro salto > 20 m
+    t_desfecho, d_ant, d_min = None, None, None
+    for t, d in sorted(fisico):
+        if d_ant is not None and d > d_ant + 20.0:
+            break
+        if d_min is None or d < d_min - 1e-9:
+            d_min, t_desfecho = d, t
+        d_ant = d
+    res.update(desligamentos(res["t_ttc3"], entregas, vegos, saidas_ecu, t_desfecho))
     # Validade da rodada: a percepção (entrada do relé, antes de qualquer perturbação) não pode ter
     # travado nos 3 s antes do TTC crítico. Travas do Gazebo no arranque derrubam a ECU por timeout
     # independentemente do fator experimental.

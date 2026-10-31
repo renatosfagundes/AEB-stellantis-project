@@ -103,10 +103,11 @@ def main():
                     gap = [fl(r["gap_final_m"]) for r in ls if r["resultado"] == "PARADO"]
                     linhas.append([f"{100 * p:.0f}%", pol, len(ls), f1([fl(r["lat_brake_ms"]) for r in ls], 0),
                                    f1([fl(r["descartados"]) for r in ls], 1), f1([fl(r["lacunas_60ms"]) for r in ls], 1),
-                                   f"{100 * mean(fl(r['ecu_off']) or 0 for r in ls):.0f}%", f1(gap, 2), f"{100 * len(col) / len(ls):.0f}%",
+                                   f"{100 * mean(fl(r['ecu_off']) or 0 for r in ls):.0f}%", f1([fl(r.get('n_off')) or 0 for r in ls], 1),
+                                   f1(gap, 2), f"{100 * len(col) / len(ls):.0f}%",
                                    f1([fl(r['v_final_kmh']) for r in col], 1) if col else "-"])
-            md.append(md_tabela(["Fora de ordem", "Política", "n", "Latência de frenagem (ms)", "Descartados", "Lacunas > 60 ms", "ECU OFF",
-                                 "Dist. parada (m)", "Colisões", "v impacto (km/h)"], linhas))
+            md.append(md_tabela(["Fora de ordem", "Política", "n", "Latência de frenagem (ms)", "Descartados", "Lacunas > 60 ms", "ECU OFF antes do desfecho",
+                                 "Episódios de OFF por rodada", "Dist. parada (m)", "Colisões", "v impacto (km/h)"], linhas))
     texto = "\n".join(md) + "\n"
     (OUT / f"resumo_sil_{a.cenario}.md").write_text(texto, encoding="utf-8")
     print(texto)
