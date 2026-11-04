@@ -116,6 +116,41 @@ static void test_fsm_fault(void)
     TEST_ASSERT(fsm_out.fsm_state == FSM_OFF, "FSM goes to OFF on fault");
 }
 
+/* SIL finding: after a transient perception fault clears, the FSM must
+ * return from OFF to STANDBY when there is no threat, instead of staying
+ * latched in OFF (which is broadcast as "AEB disabled" on 0x200/UDS). */
+static void test_fsm_recovers_off_to_standby(void)
+{
+    perception_output_t perc = {
+        .distance = 80.0f,
+        .v_ego = 15.0f,
+        .v_rel = 0.0f,
+        .fault_flag = 1U
+    };
+    driver_input_t driver = {
+        .brake_pedal = 0U,
+        .accel_pedal = 0U,
+        .steering_angle = 0.0f,
+        .aeb_enabled = 1U
+    };
+    ttc_output_t ttc = {
+        .ttc = 10.0f,
+        .d_brake = 0.0f,
+        .is_closing = 0U
+    };
+    fsm_output_t fsm_out;
+
+    fsm_init(&fsm_out);
+    fsm_step(0.01f, &perc, &driver, &ttc, &fsm_out);
+    TEST_ASSERT(fsm_out.fsm_state == FSM_OFF, "FSM in OFF while fault active");
+
+    /* Fault clears, no threat */
+    perc.fault_flag = 0U;
+    fsm_step(0.01f, &perc, &driver, &ttc, &fsm_out);
+    TEST_ASSERT(fsm_out.fsm_state == FSM_STANDBY,
+                "FSM recovers OFF -> STANDBY after fault clears");
+}
+
 static void test_fsm_override(void)
 {
     perception_output_t perc = {
@@ -316,6 +351,7 @@ int main(void)
     printf("\n--- FSM Tests (FR-FSM-001 to FR-FSM-006) ---\n");
     test_fsm_initial();
     test_fsm_fault();
+    test_fsm_recovers_off_to_standby();
     test_fsm_override();
 
     printf("\n--- Issue #95: brake-hold below V_EGO_MIN ---\n");

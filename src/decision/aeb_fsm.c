@@ -397,6 +397,18 @@ void fsm_step(float32_t delta_t_s,
                 /* Force pass through WARNING (FR-DEC-011) */
                 new_state = FSM_WARNING;
             }
+            else if (current_state == FSM_OFF)
+            {
+                /* Recover from a cleared fault. Priority 1 forces OFF while
+                 * perception->fault_flag is set or AEB is disabled; once it
+                 * no longer does (fault cleared, AEB enabled) and there is no
+                 * threat, OFF must drop to STANDBY. Otherwise the FSM stays
+                 * latched in OFF and reports "disabled" on 0x200/UDS while
+                 * actually armed, only ever leaving OFF straight into WARNING
+                 * when a threat appears. (SIL finding: transient radar ROC
+                 * fault at boot left the ECU reporting OFF for the whole run.) */
+                new_state = FSM_STANDBY;
+            }
             else
             {
                 /* MISRA C:2012 Rule 15.7: terminal else clause.
