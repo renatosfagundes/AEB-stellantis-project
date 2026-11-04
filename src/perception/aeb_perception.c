@@ -36,11 +36,13 @@ static void lidar_state_reset(lidar_state_t *s)
 
 static uint8_t lidar_fault_detect(float32_t d_l)
 {
+    uint8_t bad_abs;
     uint8_t bad;
     uint8_t fault;
 
-    bad = (!isfinite(d_l) ||
-           (d_l < LIDAR_DIST_MIN) || (d_l > LIDAR_DIST_MAX)) ? 1U : 0U;
+    bad_abs = (!isfinite(d_l) ||
+               (d_l < LIDAR_DIST_MIN) || (d_l > LIDAR_DIST_MAX)) ? 1U : 0U;
+    bad = bad_abs;
 
     if ((s_lidar.is_first == 0U) && (bad == 0U)) {
         if (FABSF(d_l - s_lidar.prev_d) > DIST_ROC_LIMIT) {
@@ -50,6 +52,18 @@ static uint8_t lidar_fault_detect(float32_t d_l)
 
     if (bad != 0U) {
         if (s_lidar.ctr < 255U) { s_lidar.ctr++; }
+        /* Bounded recovery (SIL finding): a one-off jump in an otherwise
+         * in-range signal (a new target entering the sensor, a replayed
+         * frame) only trips the rate-of-change test. Since prev_d is never
+         * updated on bad frames, that latches the fault forever. After
+         * SENSOR_RECOVER_CYCLES such cycles, re-baseline to the current
+         * plausible reading so the detector resynchronises to the new level.
+         * Absolute out-of-range / non-finite readings never recover here —
+         * only the ROC-only case (bad_abs == 0) does. */
+        if ((bad_abs == 0U) && (s_lidar.ctr >= (uint8_t)SENSOR_RECOVER_CYCLES)) {
+            s_lidar.ctr    = 0U;
+            s_lidar.prev_d = d_l;
+        }
     } else {
         /* Update ROC baseline and arm is_first only on trustworthy frames —
          * prevents a bad first frame from contaminating prev_d. */
@@ -83,12 +97,14 @@ static void radar_state_reset(radar_state_t *s)
 
 static uint8_t radar_fault_detect(float32_t d_r, float32_t vr_r)
 {
+    uint8_t bad_abs;
     uint8_t bad;
     uint8_t fault;
 
-    bad = (!isfinite(d_r) || !isfinite(vr_r) ||
-           (d_r < RADAR_DIST_MIN) || (d_r > RADAR_DIST_MAX) ||
-           (FABSF(vr_r) > MAX_REL_VEL)) ? 1U : 0U;
+    bad_abs = (!isfinite(d_r) || !isfinite(vr_r) ||
+               (d_r < RADAR_DIST_MIN) || (d_r > RADAR_DIST_MAX) ||
+               (FABSF(vr_r) > MAX_REL_VEL)) ? 1U : 0U;
+    bad = bad_abs;
 
     if ((s_radar.is_first == 0U) && (bad == 0U)) {
         if ((FABSF(d_r  - s_radar.prev_d)  > DIST_ROC_LIMIT) ||
@@ -99,6 +115,15 @@ static uint8_t radar_fault_detect(float32_t d_r, float32_t vr_r)
 
     if (bad != 0U) {
         if (s_radar.ctr < 255U) { s_radar.ctr++; }
+        /* Bounded recovery — see lidar_fault_detect(). Re-baseline to the
+         * current plausible reading after SENSOR_RECOVER_CYCLES ROC-only bad
+         * cycles so a one-off jump cannot latch the radar off forever.
+         * Absolute out-of-range / non-finite readings never recover here. */
+        if ((bad_abs == 0U) && (s_radar.ctr >= (uint8_t)SENSOR_RECOVER_CYCLES)) {
+            s_radar.ctr     = 0U;
+            s_radar.prev_d  = d_r;
+            s_radar.prev_vr = vr_r;
+        }
     } else {
         /* Update ROC baseline and arm is_first only on trustworthy frames —
          * prevents a bad first frame from contaminating prev_d/prev_vr. */

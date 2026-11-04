@@ -80,6 +80,57 @@ static void test_lidar_no_fault_before_latch(void)
 }
 
 /* =========================================================================
+ * Bounded recovery (SIL finding)
+ * A sustained, in-range ROC jump latches the fault at SENSOR_FAULT_CYCLES but
+ * must recover after SENSOR_RECOVER_CYCLES, so a one-off jump (new target,
+ * replayed frame) cannot latch the sensor off forever.
+ * ====================================================================== */
+static void test_lidar_bounded_recovery_after_jump(void)
+{
+    raw_sensor_input_t in;
+    perception_output_t out;
+    int i;
+
+    perception_init();
+    in = make_good_input();
+
+    /* establish an in-range baseline (prev_d = 30) */
+    for (i = 0; i < 3; i++) { in.lidar_d = 30.0f; perception_step(&in, &out); }
+
+    /* sustained in-range jump trips ROC (|80-30| > 10); latches the fault */
+    in.lidar_d = 80.0f;
+    for (i = 0; i < (int)SENSOR_FAULT_CYCLES; i++) { perception_step(&in, &out); }
+    CHECK((out.fault_flag & AEB_FAULT_LIDAR) != 0U,
+          "LiDAR: sustained in-range jump latches fault");
+
+    /* keep feeding the new plausible level: recovers after SENSOR_RECOVER_CYCLES */
+    for (i = 0; i < (int)SENSOR_RECOVER_CYCLES; i++) { perception_step(&in, &out); }
+    CHECK((out.fault_flag & AEB_FAULT_LIDAR) == 0U,
+          "LiDAR: recovers to the new level after SENSOR_RECOVER_CYCLES");
+}
+
+static void test_radar_bounded_recovery_after_jump(void)
+{
+    raw_sensor_input_t in;
+    perception_output_t out;
+    int i;
+
+    perception_init();
+    in = make_good_input();
+
+    for (i = 0; i < 3; i++) { in.radar_d = 30.0f; in.radar_vr = 5.0f; perception_step(&in, &out); }
+
+    in.radar_d = 80.0f; in.radar_vr = 5.0f;   /* distance ROC trips; vr steady */
+    for (i = 0; i < (int)SENSOR_FAULT_CYCLES; i++) { perception_step(&in, &out); }
+    CHECK((out.fault_flag & AEB_FAULT_RADAR) != 0U,
+          "Radar: sustained in-range jump latches fault");
+
+    for (i = 0; i < (int)SENSOR_RECOVER_CYCLES; i++) { perception_step(&in, &out); }
+    CHECK((out.fault_flag & AEB_FAULT_RADAR) == 0U,
+          "Radar: recovers to the new level after SENSOR_RECOVER_CYCLES");
+}
+
+/* =========================================================================
  * TEST 2 — FR-PER-006, FR-PER-007
  * LiDAR fault IS latched on exactly SENSOR_FAULT_CYCLES consecutive bad frames.
  * ====================================================================== */
@@ -811,6 +862,8 @@ int main(void)
     test_lidar_no_fault_before_latch();
     test_lidar_fault_latches_at_cycle3();
     test_lidar_counter_resets_on_good_frame();
+    test_lidar_bounded_recovery_after_jump();
+    test_radar_bounded_recovery_after_jump();
     test_radar_fault_latches_at_cycle3();
     test_radar_no_fault_single_bad_vr();
     test_can_timeout_sets_fault_flags();

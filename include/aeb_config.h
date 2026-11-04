@@ -60,6 +60,11 @@
 
 /* ===== Sensor fault (FR-PER-007) ===== */
 #define SENSOR_FAULT_CYCLES   3U         /**< consecutive bad cycles  */
+#define SENSOR_RECOVER_CYCLES 50U        /**< bad cycles (ROC-only, in-range)
+                                              after which the detector re-baselines
+                                              to the current reading, so a one-off
+                                              jump cannot latch the sensor off
+                                              forever (0.5 s @ 10 ms)       */
 #define DIST_ROC_LIMIT        10.0F      /**< m/cycle                 */
 #define VEL_ROC_LIMIT         2.0F       /**< m/s per cycle           */
 #define STEERING_OVERRIDE_DEG 5.0F       /**< degrees                 */
